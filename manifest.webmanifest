@@ -1,0 +1,16 @@
+{
+  "name": "アメコミ図鑑",
+  "short_name": "アメコミ図鑑",
+  "description": "出版社・作品・表紙・キャラクターとヴァリアントをまとめる自分だけのアメコミ図鑑",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f1e4",
+  "theme_color": "#141414",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
