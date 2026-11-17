@@ -137,6 +137,16 @@ button,input,label,a{touch-action:manipulation;-webkit-tap-highlight-color:trans
 /* character card */
 .ccard{border-top:7px solid var(--c)}
 .ccard .hn{font-size:21px;line-height:1.05;word-break:break-word}
+.g-media{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:760px){.g-media{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}
+.mtile .mt-art{aspect-ratio:4/3;background:var(--mc);border-bottom:3px solid var(--ink);position:relative;overflow:hidden;display:flex;align-items:flex-end}
+.mtile .mt-art::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(0,0,0,.18) 1.6px,transparent 2px);background-size:10px 10px}
+.mtile .mt-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.55;mix-blend-mode:multiply}
+.mt-en{position:relative;font-family:var(--display);font-size:clamp(28px,7vw,40px);line-height:1;color:#fff;text-shadow:3px 3px 0 var(--ink);-webkit-text-stroke:1.5px var(--ink);padding:10px 12px}
+.mt-cap{padding:9px 12px 12px;display:flex;flex-direction:column;gap:2px}
+.mt-cap b{font-family:var(--jp-display);font-weight:400;font-size:18px}
+.mt-cap span{font-size:12px;color:var(--muted)}
+.mhead{background:linear-gradient(100deg,var(--c) 0 58%,var(--mc) 58%)}
 .stag{position:absolute;left:8px;top:8px;background:var(--ink);color:var(--yellow);font-family:var(--display);font-size:13px;letter-spacing:1px;padding:1px 7px;border:2px solid #fff}
 .scard{border-top:7px solid var(--c)}
 .badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border:2px solid var(--ink);font-family:var(--display);font-size:15px;padding:1px 7px;border-radius:999px;box-shadow:2px 2px 0 var(--ink)}
@@ -269,7 +279,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 const pub=id=>S.pubs.find(x=>x.id===id);
 const title=id=>S.titles.find(x=>x.id===id);
+const MEDIA=[
+  {k:'comic',n:'コミック',en:'COMICS',cv:'表紙',c:'#ffd23f',ex:'例: The Amazing Spider-Man'},
+  {k:'anime',n:'アニメ',en:'ANIME',cv:'ビジュアル',c:'#ff6fb5',ex:'例: X-Men: The Animated Series'},
+  {k:'movie',n:'映画',en:'MOVIES',cv:'ポスター',c:'#5b95ff',ex:'例: Spider-Man: No Way Home'},
+  {k:'game',n:'ゲーム',en:'GAMES',cv:'パッケージ',c:'#36d07f',ex:"例: Marvel's Spider-Man 2"}];
+const MD=k=>MEDIA.find(m=>m.k===k)||MEDIA[0];
+const mediaOf=x=>(x&&x.media)||'comic';
 const ser=id=>S.series.find(x=>x.id===id);
+const seriesOfMedia=(pid,m)=>S.series.filter(x=>x.publisherId===pid&&mediaOf(x)===m);
+const mediaOfTitle=t=>{const x=t&&t.seriesId&&ser(t.seriesId);return x?mediaOf(x):'comic'};
+const cvLabel=t=>MD(mediaOfTitle(t)).cv;
 const seriesOf=pid=>S.series.filter(x=>x.publisherId===pid);
 const titlesOfSeries=sid=>S.titles.filter(t=>t.seriesId===sid);
 const looseTitles=pid=>S.titles.filter(t=>t.publisherId===pid&&!(t.seriesId&&ser(t.seriesId)));
@@ -422,20 +442,22 @@ async function delPub(p){for(const t of titlesOf(p.id))await delTitle(t);for(con
 function setStack(s){S.stack=s;S.lb=null;render();window.scrollTo(0,0)}
 function go(v){setStack(S.stack.concat([v]))}
 function pathPub(id){return [{v:'home'},{v:'pub',id}]}
-function pathSeries(id){const x=ser(id);return pathPub(x&&x.publisherId).concat([{v:'series',id}])}
+function pathMedia(pid,m){return pathPub(pid).concat([{v:'media',id:pid,m}])}
+function pathSeries(id){const x=ser(id);return pathMedia(x&&x.publisherId,mediaOf(x)).concat([{v:'series',id}])}
 function pathTitle(id,tab){const t=title(id);const base=t&&t.seriesId&&ser(t.seriesId)?pathSeries(t.seriesId):pathPub(t&&t.publisherId);return base.concat([{v:'title',id,tab:tab||'covers'}])}
 function pathChar(id){const c=char(id);return pathTitle(c&&c.titleId,'chars').concat([{v:'char',id}])}
 function validateStack(){
   if(!allLoaded())return;
   for(let i=1;i<S.stack.length;i++){
     const e=S.stack[i];
-    const ok=e.v==='pub'?pub(e.id):e.v==='series'?ser(e.id):e.v==='title'?title(e.id):char(e.id);
+    const ok=e.v==='pub'||e.v==='media'?pub(e.id):e.v==='series'?ser(e.id):e.v==='title'?title(e.id):char(e.id);
     if(!ok){S.stack=S.stack.slice(0,i);return}
   }
 }
 function crumbName(e){
   if(e.v==='home')return 'TOP';
   if(e.v==='pub')return (pub(e.id)||{}).name||'';
+  if(e.v==='media')return MD(e.m).n;
   if(e.v==='series')return (ser(e.id)||{}).name||'';
   if(e.v==='title')return (title(e.id)||{}).name||'';
   if(e.v==='char'){const c=char(e.id);return c?heroOf(c):''}
@@ -454,6 +476,7 @@ function render(){
   if(!allLoaded()&&!S.error){h+='<div class="loading display">LOADING…</div>'}
   else if(v.v==='home')h+=vHome();
   else if(v.v==='pub')h+=vPub(v);
+  else if(v.v==='media')h+=vMedia(v);
   else if(v.v==='series')h+=vSeries(v);
   else if(v.v==='title')h+=vTitle(v);
   else if(v.v==='char')h+=vChar(v);
@@ -471,9 +494,9 @@ function renderFab(v){
   const f=$('#fab');let a=null;
   if(S.ready&&S.canEdit){
     if(v.v==='home')a=['add-pub','','出版社を追加'];
-    else if(v.v==='pub')a=['add-series',v.id,'シリーズを追加'];
+    else if(v.v==='media')a=['add-series',v.id,'シリーズを追加'];
     else if(v.v==='series')a=['add-title',v.id,'作品を追加'];
-    else if(v.v==='title')a=(v.tab||'covers')==='covers'?['add-cover',v.id,'表紙を追加']:['add-char',v.id,'キャラを追加'];
+    else if(v.v==='title')a=(v.tab||'covers')==='covers'?['add-cover',v.id,cvLabel(title(v.id))+'を追加']:['add-char',v.id,'キャラを追加'];
     else if(v.v==='var')a=['add-variant','','画像を追加'];
   }
   if(!a){f.hidden=true;return}
@@ -492,7 +515,7 @@ function head(col,tag,name,sub,a){return `<section class="page-head panel" style
 function vHome(){
   const pubs=S.pubs;
   return `<section class="hero panel">
-    <div><h1>AMERICAN<br>COMICS <span>図鑑</span></h1><p>出版社 → シリーズ → 作品 → 表紙とキャラクター</p><p class="savenote">あなた専用の図鑑です。データはこのブラウザの中だけに保存されます。</p></div>
+    <div><h1>AMERICAN<br>COMICS <span>図鑑</span></h1><p>出版社 → コミック・アニメ・映画・ゲーム → シリーズ → 作品</p><p class="savenote">あなた専用の図鑑です。データはこのブラウザの中だけに保存されます。</p></div>
     <div class="stats"><div class="stat"><b>${pubs.length}</b><span>出版社</span></div><div class="stat"><b>${S.series.length}</b><span>シリーズ</span></div><div class="stat"><b>${S.titles.length}</b><span>作品</span></div><div class="stat"><b>${S.chars.length}</b><span>キャラ</span></div></div>
   </section>
   <div class="search"><input id="q" type="text" placeholder="シリーズ・作品・キャラを検索（例: Spider-Man）" aria-label="検索" autocomplete="off"></div>
@@ -523,7 +546,7 @@ function seriesCard(x){
   let cv=null;for(const t of ts){cv=coversOf(t.id)[0];if(cv)break}
   const nc=S.chars.filter(c=>ts.some(t=>t.id===c.titleId)).length;
   return `<button class="card panel scard" style="--c:${col}" data-act="open-series" data-id="${esc(x.id)}">
-    <div class="thumb">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:ph(x.name,col)}<span class="stag">SERIES</span></div>
+    <div class="thumb">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:ph(x.name,col)}<span class="stag">${MD(mediaOf(x)).en}</span></div>
     <div class="cap"><b>${esc(x.name)}</b><span>作品 ${ts.length} ・ キャラ ${nc}</span></div>
   </button>`;
 }
@@ -545,26 +568,44 @@ function renderResults(){
   box.innerHTML=`<h2 class="sec">検索結果<small>${cs.length+ts.length+ss.length}件</small></h2>
    <div class="grid g-img">${ss.map(seriesCard).join('')}${ts.map(titleCard).join('')}${cs.map(charCard).join('')}${!cs.length&&!ts.length&&!ss.length?'<div class="empty">見つかりませんでした</div>':''}</div>`;
 }
+function mediaTile(p,m){
+  const ss=seriesOfMedia(p.id,m.k),ids=new Set(ss.map(x=>x.id));
+  const ts=S.titles.filter(t=>ids.has(t.seriesId));
+  let cv=null;for(const t of ts){cv=coversOf(t.id)[0];if(cv)break}
+  return `<button class="card panel mtile" style="--mc:${m.c}" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">
+    <div class="mt-art">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:''}<span class="mt-en">${m.en}</span></div>
+    <div class="mt-cap"><b>${m.n}</b><span>シリーズ ${ss.length} ・ 作品 ${ts.length}</span></div>
+  </button>`;
+}
 function vPub(v){
   const p=pub(v.id);if(!p)return '';
-  const ss=seriesOf(p.id),loose=looseTitles(p.id);
-  return head(pcol(p),'PUBLISHER',p.name,`シリーズ ${ss.length} ／ 作品 ${titlesOf(p.id).length}`,acts('edit-pub','del-pub',p.id))+
-  `<h2 class="sec">シリーズ<small>${ss.length}</small></h2>
-   <p class="hint" style="margin:-6px 0 14px">例：Spider-Man、X-Men、Avengers などの大きなくくり</p>
-   <div class="grid g-img">${ss.map(seriesCard).join('')}${addTile('add-series','シリーズを追加',p.id)}
-   ${!ss.length&&!S.canEdit?'<div class="empty">まだシリーズがありません</div>':''}</div>`+
+  const loose=looseTitles(p.id);
+  return head(pcol(p),'PUBLISHER',p.name,`シリーズ ${seriesOf(p.id).length} ／ 作品 ${titlesOf(p.id).length}`,acts('edit-pub','del-pub',p.id))+
+  `<h2 class="sec">ジャンル</h2>
+   <div class="grid g-media">${MEDIA.map(m=>mediaTile(p,m)).join('')}</div>`+
   (loose.length?`<h2 class="sec">シリーズ未分類の作品<small>${loose.length}</small></h2>
    <p class="hint" style="margin:-6px 0 14px">作品の「編集」からシリーズを選ぶと移動できます</p>
    <div class="grid g-img">${loose.map(titleCard).join('')}</div>`:'');
 }
+function vMedia(v){
+  const p=pub(v.id);if(!p)return '';
+  const m=MD(v.m),ss=seriesOfMedia(p.id,m.k);
+  return `<section class="page-head panel mhead" style="--c:${pcol(p)};--mc:${m.c}"><span class="tag">${m.en}</span><h1>${esc(m.n)}</h1>
+    <div class="sub"><button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>　／　シリーズ ${ss.length}</div></section>
+   <h2 class="sec">シリーズ<small>${ss.length}</small></h2>
+   <p class="hint" style="margin:-6px 0 14px">例：Spider-Man、X-Men、Avengers などの大きなくくり</p>
+   <div class="grid g-img">${ss.map(seriesCard).join('')}${addTile('add-series','シリーズを追加',p.id)}
+   ${!ss.length&&!S.canEdit?'<div class="empty">まだシリーズがありません</div>':''}</div>`;
+}
 function vSeries(v){
   const x=ser(v.id);if(!x)return '';
   const p=pub(x.publisherId),ts=titlesOfSeries(x.id);
-  const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',`作品 ${ts.length}`].filter(Boolean).join('　／　');
-  return head(pcol(p),'SERIES',x.name,sub,acts('edit-series','del-series',x.id))+
+  const m=MD(mediaOf(x));
+  const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',p?`<button class="linkish" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">${m.n}</button>`:'',`作品 ${ts.length}`].filter(Boolean).join('　／　');
+  return head(pcol(p),m.en+' ／ SERIES',x.name,sub,acts('edit-series','del-series',x.id))+
    (x.note?`<p class="note panel">${esc(x.note)}</p>`:'')+
    `<h2 class="sec">作品一覧<small>${ts.length}</small></h2>
-   <p class="hint" style="margin:-6px 0 14px">例：The Amazing Spider-Man、Ultimate Spider-Man など</p>
+   <p class="hint" style="margin:-6px 0 14px">${esc(m.ex)} など</p>
    <div class="grid g-img">${ts.map(titleCard).join('')}${addTile('add-title','作品を追加',x.id)}
    ${!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''}</div>`;
 }
@@ -578,14 +619,14 @@ function vTitle(v){
     body=`<div class="grid g-img">${cs.map((c,i)=>`<button class="card panel" data-act="cover-lb" data-i="${i}">
       <div class="thumb"><img src="${src(c.assetId)}" alt="${esc(c.label||'表紙')}" loading="lazy"></div>
       ${c.label||c.artist?`<div class="cap">${c.label?`<b>${esc(c.label)}</b>`:''}${c.artist?`<span>${esc(c.artist)}</span>`:''}</div>`:''}
-    </button>`).join('')}${addTile('add-cover','表紙を追加',t.id)}${!cs.length&&!S.canEdit?'<div class="empty">まだ表紙がありません</div>':''}</div>`;
+    </button>`).join('')}${addTile('add-cover',cvLabel(t)+'を追加',t.id)}${!cs.length&&!S.canEdit?`<div class="empty">まだ${cvLabel(t)}がありません</div>`:''}</div>`;
   }else{
     body=`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',t.id)}${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`;
   }
-  return head(colOfTitle(t),'TITLE',t.name,sub,acts('edit-title','del-title',t.id))+
+  return head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id))+
    (t.note?`<p class="note panel">${esc(t.note)}</p>`:'')+
    `<div class="tabs" role="tablist">
-     <button class="tab ${tab==='covers'?'on':''}" role="tab" aria-selected="${tab==='covers'}" data-act="tab" data-k="covers">表紙一覧<b>${cs.length}</b></button>
+     <button class="tab ${tab==='covers'?'on':''}" role="tab" aria-selected="${tab==='covers'}" data-act="tab" data-k="covers">${cvLabel(t)}一覧<b>${cs.length}</b></button>
      <button class="tab ${tab==='chars'?'on':''}" role="tab" aria-selected="${tab==='chars'}" data-act="tab" data-k="chars">キャラクター一覧<b>${ch.length}</b></button>
    </div>`+body;
 }
@@ -710,18 +751,19 @@ function pubForm(p){
     onSubmit:async v=>{const d={name:v.name,color:v.color};
       if(p)await wr(ref('publishers',p.id).update(d));else await wr(S.db.collection('publishers').add(Object.assign(d,{createdAt:Date.now()})))}});
 }
-function seriesForm(pid,x){
-  openForm({title:x?'シリーズを編集':'シリーズを追加',values:x||{},done:x?'更新しました':'シリーズを追加しました',
-    fields:[{k:'name',label:'シリーズ名（大枠の作品）',required:true,ph:'例: Spider-Man'},
+function seriesForm(pid,x,m){
+  openForm({title:x?'シリーズを編集':'シリーズを追加',values:x?Object.assign({},x,{media:mediaOf(x)}):{media:m||'comic'},done:x?'更新しました':'シリーズを追加しました',
+    fields:[{k:'name',label:'シリーズ名（大枠の作品）',required:true,ph:'例: Spider-Man'},{k:'media',label:'ジャンル',type:'select',options:MEDIA.map(m=>[m.k,m.n])},
       {k:'note',label:'メモ',type:'textarea',rows:3,ph:'どんなシリーズか、おすすめの読み始めなど'}],
-    onSubmit:async v=>{const d={name:v.name,note:v.note};
+    onSubmit:async v=>{const d={name:v.name,note:v.note,media:v.media||'comic'};
       if(x)await wr(ref('series',x.id).update(d));else await wr(S.db.collection('series').add(Object.assign(d,{publisherId:pid,createdAt:Date.now()})))}});
 }
 function titleForm(pid,t,sid){
   const p=pub(t?t.publisherId:pid);
-  const opts=[['','（シリーズ未分類）']].concat(seriesOf(p?p.id:pid).map(x=>[x.id,x.name]));
+  const opts=[['','（シリーズ未分類）']].concat(seriesOf(p?p.id:pid).map(x=>[x.id,MD(mediaOf(x)).n+'：'+x.name]));
+  const ex=MD(mediaOf(ser(t?t.seriesId:sid))).ex;
   openForm({title:t?'作品を編集':'作品を追加',values:t?Object.assign({},t,{seriesId:t.seriesId||''}):{seriesId:sid||''},done:t?'更新しました':'作品を追加しました',
-    fields:[{k:'name',label:'作品名',required:true,ph:'例: The Amazing Spider-Man'},{k:'seriesId',label:'シリーズ',type:'select',options:opts},
+    fields:[{k:'name',label:'作品名',required:true,ph:ex},{k:'seriesId',label:'シリーズ',type:'select',options:opts},
       {k:'year',label:'刊行年・期間',ph:'例: 1963–'},
       {k:'note',label:'メモ・あらすじ',type:'textarea',rows:4,ph:'シリーズの概要や好きなエピソードなど'}],
     onSubmit:async v=>{const d={name:v.name,year:v.year,note:v.note,seriesId:v.seriesId||''};
@@ -731,7 +773,8 @@ function coverForm(tid,c){
   const fields=c
     ?[{k:'image',label:'表紙画像',type:'file'},{k:'label',label:'号数・カバー名',ph:'例: #1 Variant Cover B'},{k:'artist',label:'アーティスト',ph:'例: Alex Ross'}]
     :[{k:'image',label:'表紙画像',type:'file',multiple:true,required:true,note:'複数選ぶとまとめて追加されます'},{k:'label',label:'号数・カバー名',ph:'例: #1 Variant Cover B'},{k:'artist',label:'アーティスト',ph:'例: Alex Ross'}];
-  openForm({title:c?'表紙を編集':'表紙を追加',values:c?{image:c.assetId,label:c.label,artist:c.artist}:{},done:c?'更新しました':'表紙を追加しました',fields,
+  const L=cvLabel(title(tid));
+  openForm({title:c?L+'を編集':L+'を追加',values:c?{image:c.assetId,label:c.label,artist:c.artist}:{},done:c?'更新しました':'表紙を追加しました',fields,
     onSubmit:async(v,prog)=>{
       if(c){const d={label:v.label,artist:v.artist};let old=null;
         if(v.image){prog('アップロード中…');d.assetId=await up(v.image);old=c.assetId}
@@ -786,7 +829,8 @@ document.addEventListener('click',e=>{
     case 'del-pub':{const p=pub(id);const n=titlesOf(id).length,m=seriesOf(id).length;
       openConfirm(`「${esc(p.name)}」を削除しますか？${n||m?`<br>中のシリーズ ${m} 件・作品 ${n} 件と、その表紙・キャラクターもすべて削除されます。`:''}`,'削除する',async()=>{await delPub(p);toast('削除しました')});break}
     case 'open-series':setStack(pathSeries(id));break;
-    case 'add-series':seriesForm(id);break;
+    case 'open-media':setStack(pathMedia(id,b.dataset.m));break;
+    case 'add-series':seriesForm(id,null,v.v==='media'?v.m:'comic');break;
     case 'edit-series':seriesForm(null,ser(id));break;
     case 'del-series':{const x=ser(id);const n=titlesOfSeries(id).length;
       openConfirm(`「${esc(x.name)}」を削除しますか？${n?`<br>中の作品 ${n} 件と、その表紙・キャラクターもすべて削除されます。`:''}`,'削除する',async()=>{await delSeries(x);toast('削除しました')});break}
