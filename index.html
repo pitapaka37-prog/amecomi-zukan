@@ -157,6 +157,19 @@ button,input,label,a{touch-action:manipulation;-webkit-tap-highlight-color:trans
 .same-strip{display:flex;gap:10px;overflow-x:auto;padding:12px 2px 8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
 .same-strip button{flex:none;width:100px;aspect-ratio:3/4;border:2px solid var(--ink);padding:0;background:#ddd;cursor:zoom-in;scroll-snap-align:start;overflow:hidden}
 .same-strip img{width:100%;height:100%;object-fit:cover}
+.page-head>.head-img{position:absolute;right:0;top:0;bottom:0;width:48%;height:100%;object-fit:cover;z-index:0;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%);mask-image:linear-gradient(90deg,transparent 0,#000 55%)}
+.page-head.has-img h1,.page-head.has-img .sub{max-width:80%}
+@media (max-width:640px){.page-head>.head-img{width:62%}}
+.pc-cover{aspect-ratio:16/9;background:#ccc center/cover;border-bottom:2px solid #e6e1d4}
+.pick-acts{display:flex;gap:10px;flex-wrap:wrap}
+.pick-acts .btn.on{background:var(--ink);color:var(--yellow)}
+.pick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:10px}
+.pick{appearance:none;padding:0;border:3px solid var(--ink);aspect-ratio:3/4;overflow:hidden;cursor:pointer;background:#ddd;border-radius:4px;position:relative}
+.pick img{width:100%;height:100%;object-fit:cover}
+.pick.on{outline:4px solid var(--red);outline-offset:2px}
+.pick.on::after{content:"✓";position:absolute;right:4px;top:4px;background:var(--red);color:#fff;font-weight:900;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff}
+.mtile.chosen .mt-art img{opacity:1;mix-blend-mode:normal}
 .stag{position:absolute;left:8px;top:8px;background:var(--ink);color:var(--yellow);font-family:var(--display);font-size:13px;letter-spacing:1px;padding:1px 7px;border:2px solid #fff}
 .scard{border-top:7px solid var(--c)}
 .badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border:2px solid var(--ink);font-family:var(--display);font-size:15px;padding:1px 7px;border-radius:999px;box-shadow:2px 2px 0 var(--ink)}
@@ -313,6 +326,24 @@ const colOfChar=c=>pcol(pub(charPubId(c)));
 const norm=t=>(t||'').normalize('NFKC').toLowerCase().replace(/[\s\-‐‑‒–—―_・.·'’"]/g,'');
 const charKey=c=>norm(c.heroName||c.name);
 const mediaOfChar=c=>{const x=c&&c.seriesId&&ser(c.seriesId);return x?mediaOf(x):mediaOfTitle(title(c&&c.titleId))};
+const okImg=id=>!!(id&&S.urls[id]);
+function autoTitleCover(t){const c=coversOf(t.id)[0];return c?c.assetId:''}
+function titleCover(t){return okImg(t.coverId)?t.coverId:autoTitleCover(t)}
+function firstOf(ts){for(const t of ts){const a=titleCover(t);if(a)return a}return ''}
+function seriesCover(x){return okImg(x.coverId)?x.coverId:firstOf(titlesOfSeries(x.id))}
+function mediaCover(p,m){const mc=(p.mcovers||{})[m];if(mc&&okImg(mc.id))return mc.id;
+  for(const x of seriesOfMedia(p.id,m)){const a=seriesCover(x);if(a)return a}return ''}
+function pubCover(p){return okImg(p.coverId)?p.coverId:''}
+function pickCandidates(k){
+  const out=[],add=a=>{if(a&&okImg(a)&&!out.includes(a))out.push(a)};
+  const fromTitles=ts=>ts.forEach(t=>coversOf(t.id).forEach(c=>add(c.assetId)));
+  const fromChars=cs=>cs.forEach(c=>{add(c.imageId);(c.variants||[]).forEach(v=>add(v.assetId))});
+  if(k.kind==='pub'){const ss=seriesOf(k.id);fromTitles(titlesOf(k.id));fromChars(S.chars.filter(c=>charPubId(c)===k.id))}
+  else if(k.kind==='media'){const ss=seriesOfMedia(k.id,k.m);ss.forEach(x=>{fromTitles(titlesOfSeries(x.id));fromChars(charsOfSeries(x.id))})}
+  else if(k.kind==='series'){fromTitles(titlesOfSeries(k.id));fromChars(charsOfSeries(k.id))}
+  else if(k.kind==='title'){fromTitles([title(k.id)].filter(Boolean));fromChars(charsOf(k.id))}
+  return out.slice(0,120);
+}
 function sameName(c){
   const k=charKey(c);if(!k)return [];
   const order=m=>MEDIA.findIndex(x=>x.k===m);
@@ -464,9 +495,10 @@ async function wr(p){try{return await p}catch(e){throw new Error(msg(e))}}
 
 async function delChar(c){await wr(ref('characters',c.id).delete());await delAsset(c.imageId);for(const v of (c.variants||[]))await delAsset(v.assetId)}
 async function delCover(c){await wr(ref('covers',c.id).delete());await delAsset(c.assetId)}
-async function delTitle(t){for(const c of coversOf(t.id))await delCover(c);for(const c of charsOf(t.id))await delChar(c);await wr(ref('titles',t.id).delete())}
-async function delSeries(x){for(const t of titlesOfSeries(x.id))await delTitle(t);for(const c of charsOfSeries(x.id))await delChar(c);await wr(ref('series',x.id).delete())}
-async function delPub(p){for(const x of seriesOf(p.id))await delSeries(x);for(const t of titlesOf(p.id))await delTitle(t);await wr(ref('publishers',p.id).delete())}
+async function delOwnCover(o){if(o&&o.coverOwn&&o.coverId)await delAsset(o.coverId)}
+async function delTitle(t){await delOwnCover(t);for(const c of coversOf(t.id))await delCover(c);for(const c of charsOf(t.id))await delChar(c);await wr(ref('titles',t.id).delete())}
+async function delSeries(x){await delOwnCover(x);for(const t of titlesOfSeries(x.id))await delTitle(t);for(const c of charsOfSeries(x.id))await delChar(c);await wr(ref('series',x.id).delete())}
+async function delPub(p){await delOwnCover(p);for(const k in (p.mcovers||{})){const mc=p.mcovers[k];if(mc&&mc.own)await delAsset(mc.id)}for(const x of seriesOf(p.id))await delSeries(x);for(const t of titlesOf(p.id))await delTitle(t);await wr(ref('publishers',p.id).delete())}
 
 /* ---------- navigation ---------- */
 function setStack(s){S.stack=s;S.lb=null;render();window.scrollTo(0,0)}
@@ -539,8 +571,9 @@ function statusHtml(){
 }
 const ph=(t,c)=>`<div class="ph" style="--c:${c||'#e0312f'}"><span>${esc(t)}</span></div>`;
 const addTile=(act,label,id)=>S.canEdit?`<button class="add-tile" data-act="${act}"${id?` data-id="${esc(id)}"`:''}><span class="plus">+</span>${esc(label)}</button>`:'';
-const acts=(e,d,id)=>S.canEdit?`<div class="head-acts"><button class="btn sm" data-act="${e}" data-id="${esc(id)}">編集</button><button class="btn sm danger" data-act="${d}" data-id="${esc(id)}">削除</button></div>`:'';
-function head(col,tag,name,sub,a){return `<section class="page-head panel" style="--c:${col}"><span class="tag">${tag}</span><h1>${esc(name)}</h1>${sub?`<div class="sub">${sub}</div>`:''}${a||''}</section>`}
+const pickBtn=(kind,id,m)=>S.canEdit?`<button class="btn sm" data-act="pick-open" data-kind="${kind}" data-id="${esc(id)}"${m?` data-m="${m}"`:''}>表紙を選ぶ</button>`:'';
+const acts=(e,d,id,extra)=>S.canEdit?`<div class="head-acts"><button class="btn sm" data-act="${e}" data-id="${esc(id)}">編集</button>${extra||''}<button class="btn sm danger" data-act="${d}" data-id="${esc(id)}">削除</button></div>`:'';
+function head(col,tag,name,sub,a,img){return `<section class="page-head panel${img?' has-img':''}" style="--c:${col}">${img?`<img class="head-img" src="${src(img)}" alt="">`:''}<span class="tag">${tag}</span><h1>${esc(name)}</h1>${sub?`<div class="sub">${sub}</div>`:''}${a||''}</section>`}
 
 function vHome(){
   const pubs=S.pubs;
@@ -557,26 +590,26 @@ function vHome(){
 function pubCard(p){
   const ts=titlesOf(p.id),ids=new Set(ts.map(t=>t.id));
   const nChars=S.chars.filter(c=>charPubId(c)===p.id).length;
-  const thumbs=[];for(const t of ts){const c=coversOf(t.id)[0];if(c)thumbs.push(c.assetId);if(thumbs.length>=4)break}
+  const thumbs=[];for(const t of ts){const a=titleCover(t);if(a)thumbs.push(a);if(thumbs.length>=4)break}
   return `<button class="card panel pcard" style="--c:${pcol(p)}" data-act="open-pub" data-id="${esc(p.id)}">
     <div class="pc-band"><div class="pc-name">${esc(p.name)}</div></div>
-    <div class="pc-strip">${thumbs.length?thumbs.map(a=>`<div style="background-image:url('${src(a)}')"></div>`).join(''):'<div class="pc-empty">まだ表紙がありません</div>'}</div>
+    ${pubCover(p)?`<div class="pc-cover" style="background-image:url('${src(pubCover(p))}')"></div>`:`<div class="pc-strip">${thumbs.length?thumbs.map(a=>`<div style="background-image:url('${src(a)}')"></div>`).join(''):'<div class="pc-empty">まだ表紙がありません</div>'}</div>`}
     <div class="pc-meta"><span>シリーズ <b>${seriesOf(p.id).length}</b></span><span>作品 <b>${ts.length}</b></span><span>キャラ <b>${nChars}</b></span></div>
   </button>`;
 }
 function titleCard(t){
-  const c=coversOf(t.id)[0],col=colOfTitle(t);
+  const cv=titleCover(t),col=colOfTitle(t);
   return `<button class="card panel" data-act="open-title" data-id="${esc(t.id)}">
-    <div class="thumb">${c?`<img src="${src(c.assetId)}" alt="" loading="lazy">`:ph(t.name,col)}</div>
+    <div class="thumb">${cv?`<img src="${src(cv)}" alt="" loading="lazy">`:ph(t.name,col)}</div>
     <div class="cap"><b>${esc(t.name)}</b><span>${[t.year,(t.seriesId&&ser(t.seriesId)?`${cvLabel(t)} ${coversOf(t.id).length}`:`${cvLabel(t)} ${coversOf(t.id).length} ・ キャラ ${charsOf(t.id).length}`)].filter(Boolean).map(esc).join(' ／ ')}</span></div>
   </button>`;
 }
 function seriesCard(x){
   const ts=titlesOfSeries(x.id),p=pub(x.publisherId),col=pcol(p);
-  let cv=null;for(const t of ts){cv=coversOf(t.id)[0];if(cv)break}
+  const cv=seriesCover(x);
   const nc=charsOfSeries(x.id).length;
   return `<button class="card panel scard" style="--c:${col}" data-act="open-series" data-id="${esc(x.id)}">
-    <div class="thumb">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:ph(x.name,col)}<span class="stag">${MD(mediaOf(x)).en}</span></div>
+    <div class="thumb">${cv?`<img src="${src(cv)}" alt="" loading="lazy">`:ph(x.name,col)}<span class="stag">${MD(mediaOf(x)).en}</span></div>
     <div class="cap"><b>${esc(x.name)}</b><span>作品 ${ts.length} ・ キャラ ${nc}</span></div>
   </button>`;
 }
@@ -601,16 +634,16 @@ function renderResults(){
 function mediaTile(p,m){
   const ss=seriesOfMedia(p.id,m.k),ids=new Set(ss.map(x=>x.id));
   const ts=S.titles.filter(t=>ids.has(t.seriesId));
-  let cv=null;for(const t of ts){cv=coversOf(t.id)[0];if(cv)break}
-  return `<button class="card panel mtile" style="--mc:${m.c}" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">
-    <div class="mt-art">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:''}<span class="mt-en">${m.en}</span></div>
+  const cv=mediaCover(p,m.k),chosen=!!((p.mcovers||{})[m.k]&&okImg(p.mcovers[m.k].id));
+  return `<button class="card panel mtile${chosen?' chosen':''}" style="--mc:${m.c}" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">
+    <div class="mt-art">${cv?`<img src="${src(cv)}" alt="" loading="lazy">`:''}<span class="mt-en">${m.en}</span></div>
     <div class="mt-cap"><b>${m.n}</b><span>シリーズ ${ss.length} ・ 作品 ${ts.length}</span></div>
   </button>`;
 }
 function vPub(v){
   const p=pub(v.id);if(!p)return '';
   const loose=looseTitles(p.id);
-  return head(pcol(p),'PUBLISHER',p.name,`シリーズ ${seriesOf(p.id).length} ／ 作品 ${titlesOf(p.id).length}`,acts('edit-pub','del-pub',p.id))+
+  return head(pcol(p),'PUBLISHER',p.name,`シリーズ ${seriesOf(p.id).length} ／ 作品 ${titlesOf(p.id).length}`,acts('edit-pub','del-pub',p.id,pickBtn('pub',p.id)),pubCover(p))+
   `<h2 class="sec">ジャンル</h2>
    <div class="grid g-media">${MEDIA.map(m=>mediaTile(p,m)).join('')}</div>`+
   (loose.length?`<h2 class="sec">シリーズ未分類の作品<small>${loose.length}</small></h2>
@@ -620,8 +653,10 @@ function vPub(v){
 function vMedia(v){
   const p=pub(v.id);if(!p)return '';
   const m=MD(v.m),ss=seriesOfMedia(p.id,m.k);
-  return `<section class="page-head panel mhead" style="--c:${pcol(p)};--mc:${m.c}"><span class="tag">${m.en}</span><h1>${esc(m.n)}</h1>
-    <div class="sub"><button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>　／　シリーズ ${ss.length}</div></section>
+  const mimg=mediaCover(p,m.k);
+  return `<section class="page-head panel mhead${mimg?' has-img':''}" style="--c:${pcol(p)};--mc:${m.c}">${mimg?`<img class="head-img" src="${src(mimg)}" alt="">`:''}<span class="tag">${m.en}</span><h1>${esc(m.n)}</h1>
+    <div class="sub"><button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>　／　シリーズ ${ss.length}</div>
+    ${S.canEdit?`<div class="head-acts">${pickBtn('media',p.id,m.k)}</div>`:''}</section>
    <h2 class="sec">シリーズ<small>${ss.length}</small></h2>
    <p class="hint" style="margin:-6px 0 14px">例：Spider-Man、X-Men、Avengers などの大きなくくり</p>
    <div class="grid g-img">${ss.map(seriesCard).join('')}${addTile('add-series','シリーズを追加',p.id)}
@@ -638,7 +673,7 @@ function vSeries(v){
     :`<p class="hint" style="margin:-4px 0 14px">${esc(m.ex)} など</p>
       <div class="grid g-img">${ts.map(titleCard).join('')}${addTile('add-title','作品を追加',x.id)}
       ${!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''}</div>`;
-  return head(pcol(p),m.en+' ／ SERIES',x.name,sub,acts('edit-series','del-series',x.id))+
+  return head(pcol(p),m.en+' ／ SERIES',x.name,sub,acts('edit-series','del-series',x.id,pickBtn('series',x.id)),seriesCover(x))+
    (x.note?`<p class="note panel">${esc(x.note)}</p>`:'')+
    `<div class="tabs" role="tablist">
      <button class="tab ${tab==='works'?'on':''}" role="tab" aria-selected="${tab==='works'}" data-act="tab" data-k="works">作品一覧<b>${ts.length}</b></button>
@@ -659,7 +694,7 @@ function vTitle(v){
   }else{
     body=`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',t.id)}${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`;
   }
-  const top=head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id))+
+  const top=head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id,pickBtn('title',t.id)),titleCover(t))+
    (t.note?`<p class="note panel">${esc(t.note)}</p>`:'');
   if(sx){
     const n=charsOfSeries(sx.id).length;
@@ -775,6 +810,40 @@ function openForm(cfg){
     [...inp.files].slice(0,12).forEach(f=>{const im=document.createElement('img');im.src=URL.createObjectURL(f);im.alt='';pv.appendChild(im)});
     if(inp.files.length>12){const s=document.createElement('small');s.className='fnote';s.textContent=`ほか ${inp.files.length-12} 枚`;pv.appendChild(s)}
   }));
+}
+function pickTarget(k){
+  if(k.kind==='pub'){const p=pub(k.id);return p&&{name:p.name,cur:p.coverId,own:p.coverOwn}}
+  if(k.kind==='media'){const p=pub(k.id),mc=p&&(p.mcovers||{})[k.m];return p&&{name:p.name+' ／ '+MD(k.m).n,cur:mc&&mc.id,own:mc&&mc.own}}
+  if(k.kind==='series'){const x=ser(k.id);return x&&{name:x.name,cur:x.coverId,own:x.coverOwn}}
+  if(k.kind==='title'){const t=title(k.id);return t&&{name:t.name,cur:t.coverId,own:t.coverOwn}}
+}
+async function setCover(k,id,own){
+  const tg=pickTarget(k);if(!tg)return;
+  const old=tg.own&&tg.cur&&tg.cur!==id?tg.cur:null;
+  if(k.kind==='media'){const p=pub(k.id);const mc=Object.assign({},p.mcovers||{});if(id)mc[k.m]={id,own:!!own};else delete mc[k.m];
+    await wr(ref('publishers',p.id).update({mcovers:mc}))}
+  else{const col={pub:'publishers',series:'series',title:'titles'}[k.kind];await wr(ref(col,k.id).update({coverId:id||'',coverOwn:!!own}))}
+  if(old)await delAsset(old);
+}
+function openPicker(k){
+  const tg=pickTarget(k);if(!tg)return;
+  const cands=pickCandidates(k),cur=okImg(tg.cur)?tg.cur:'';
+  if(cur&&!cands.includes(cur))cands.unshift(cur);
+  S.picker=k;
+  modal.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-label="表紙を選ぶ">
+    <div class="sheet-head"><h3>表紙を選ぶ</h3><button type="button" class="x" data-act="modal-close" aria-label="閉じる">×</button></div>
+    <p class="hint" style="margin:0">${esc(tg.name)} のカードやページ上部に出る画像です</p>
+    <div class="pick-acts"><label class="btn sm pri filebtn">画像をアップロード<input type="file" id="pick-file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+      <button class="btn sm${cur?'':' on'}" data-act="pick-auto">自動（最初の表紙）</button></div>
+    <div class="ferr" id="ferr"></div>
+    ${cands.length?`<div class="pick-grid">${cands.map(a=>`<button class="pick${a===cur?' on':''}" data-act="pick" data-id="${esc(a)}" aria-label="この画像にする"><img src="${src(a)}" alt="" loading="lazy"></button>`).join('')}</div>`
+      :'<p class="muted" style="margin:0">中に登録された画像がまだありません。アップロードして選んでください。</p>'}
+  </div>`;
+  modal.hidden=false;
+  $('#pick-file').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;
+    S.busy=true;showErr('');const lb=e.target.parentElement;lb.firstChild.textContent='アップロード中…';
+    try{const id=await up(f);await setCover(S.picker,id,true);S.busy=false;closeModal();toast('表紙を変更しました')}
+    catch(err){S.busy=false;lb.firstChild.textContent='画像をアップロード';showErr(err.message||msg(err))}});
 }
 function closeModal(){if(S.busy)return;modal.hidden=true;modal.innerHTML='';S.form=null}
 function setBusy(on,text){S.busy=on;const b=$('#fsubmit')||$('#cyes');if(b){b.disabled=on;if(text)b.textContent=text}}
@@ -922,6 +991,9 @@ document.addEventListener('click',e=>{
       b.disabled=true;
       ref('characters',c.id).update({imageId:x.assetId,variants:nv}).then(()=>toast('メイン画像を変更しました'),err=>{b.disabled=false;toast(msg(err))});break}
     case 'modal-close':closeModal();break;
+    case 'pick-open':openPicker({kind:b.dataset.kind,id,m:b.dataset.m});break;
+    case 'pick':if(S.busy)break;S.busy=true;setCover(S.picker,id,false).then(()=>{S.busy=false;closeModal();toast('表紙を変更しました')},e=>{S.busy=false;showErr(e.message||msg(e))});break;
+    case 'pick-auto':if(S.busy)break;S.busy=true;setCover(S.picker,'',false).then(()=>{S.busy=false;closeModal();toast('自動に戻しました')},e=>{S.busy=false;showErr(e.message||msg(e))});break;
   }
 });
 document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;renderResults()}});
