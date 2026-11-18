@@ -72,7 +72,8 @@ button,input,label,a{touch-action:manipulation;-webkit-tap-highlight-color:trans
 .stats{display:flex;gap:10px}
 .stat{background:#fff;color:var(--ink);border:3px solid var(--ink);padding:6px 12px;text-align:center;min-width:72px}
 .stat b{display:block;font-family:var(--display);font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
-.stat span{font-size:11px;font-weight:700}
+.stat span{font-size:11px;font-weight:700;white-space:nowrap}
+@media (max-width:420px){.stat{padding:6px 4px}.stat span{font-size:10px}}
 
 .search{margin-top:18px;display:flex}
 .search input{flex:1;font:inherit;font-size:16px;padding:12px 14px;border:3px solid var(--ink);border-radius:5px;box-shadow:4px 4px 0 var(--ink);background:#fff}
@@ -170,6 +171,16 @@ button,input,label,a{touch-action:manipulation;-webkit-tap-highlight-color:trans
 .pick.on{outline:4px solid var(--red);outline-offset:2px}
 .pick.on::after{content:"✓";position:absolute;right:4px;top:4px;background:var(--red);color:#fff;font-weight:900;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff}
 .mtile.chosen .mt-art img{opacity:1;mix-blend-mode:normal}
+.ro-bar{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 12px;flex-wrap:wrap}
+.ro-hint{font-size:13px;font-weight:700;color:var(--muted)}
+.ro-item{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ro-item>.card,.ro-item>.pcard{pointer-events:none;outline:3px dashed var(--red);outline-offset:3px}
+.ro-ctl{display:flex;align-items:center;justify-content:space-between;gap:6px;background:var(--ink);border-radius:999px;padding:4px}
+.ro-ctl b{color:var(--yellow);font-family:var(--display);font-size:18px;font-weight:400;font-variant-numeric:tabular-nums}
+.ro-ctl button{width:44px;height:36px;border-radius:999px;border:2px solid var(--ink);background:var(--yellow);font-weight:900;font-size:16px;cursor:pointer}
+.ro-ctl button[disabled]{opacity:.3;cursor:default}
+@media (prefers-reduced-motion:no-preference){.ro-on .ro-item>*:first-child{animation:wig .5s ease-in-out infinite alternate}}
+@keyframes wig{from{transform:rotate(-.6deg)}to{transform:rotate(.6deg)}}
 .stag{position:absolute;left:8px;top:8px;background:var(--ink);color:var(--yellow);font-family:var(--display);font-size:13px;letter-spacing:1px;padding:1px 7px;border:2px solid #fff}
 .scard{border-top:7px solid var(--c)}
 .badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border:2px solid var(--ink);font-family:var(--display);font-size:15px;padding:1px 7px;border-radius:999px;box-shadow:2px 2px 0 var(--ink)}
@@ -370,7 +381,7 @@ function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('on');c
 /* ---------- data: stored in this browser (IndexedDB, or localStorage as fallback) ---------- */
 let idb=null;
 const LSKEY='amecomi-zukan-v1';
-S.mode='mem';S.lsBlobs={};
+S.mode='mem';S.lsBlobs={};S.reorder=null;S.roLists={};S.roBusy=false;
 const rid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,10);
 function openIDB(){return new Promise((res,rej)=>{
   try{if(!window.indexedDB)return rej(new Error('no idb'));
@@ -391,15 +402,16 @@ function lsSave(){
 }
 async function putDoc(col,o){if(S.mode==='idb')await tx('docs','readwrite',st=>st.put({key:col+'/'+o.id,col,data:o}));else if(S.mode==='ls')lsSave()}
 async function delDoc(col,id){if(S.mode==='idb')await tx('docs','readwrite',st=>st.delete(col+'/'+id));else if(S.mode==='ls')lsSave()}
-function sortCol(col){S[COLS[col]].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))}
+const ordOf=x=>(x.order!=null?x.order:(x.createdAt||0));
+function sortCol(col){S[COLS[col]].sort((a,b)=>ordOf(a)-ordOf(b))}
 const fail=e=>new Error(e&&e.message&&/容量/.test(e.message)?e.message:'保存できませんでした。ブラウザの空き容量を確認してください');
 const store={collection(col){return{
   add:async d=>{const o=Object.assign({},d,{id:rid()});const arr=S[COLS[col]];arr.push(o);sortCol(col);
     try{await putDoc(col,o)}catch(e){S[COLS[col]]=arr.filter(x=>x!==o);render();throw fail(e)}render();return {id:o.id}},
   doc:id=>({
     update:async d=>{const arr=S[COLS[col]],i=arr.findIndex(x=>x.id===id);if(i<0)throw new Error('項目が見つかりません');
-      const old=arr[i],n=Object.assign({},old,d);arr[i]=n;
-      try{await putDoc(col,n)}catch(e){arr[i]=old;render();throw fail(e)}render()},
+      const old=arr[i],n=Object.assign({},old,d);arr[i]=n;sortCol(col);
+      try{await putDoc(col,n)}catch(e){const k=arr.indexOf(n);if(k>=0)arr[k]=old;sortCol(col);render();throw fail(e)}render()},
     delete:async()=>{const before=S[COLS[col]];S[COLS[col]]=before.filter(x=>x.id!==id);
       try{await delDoc(col,id)}catch(e){S[COLS[col]]=before;render();throw fail(e)}render()}
   })}}};
@@ -501,7 +513,7 @@ async function delSeries(x){await delOwnCover(x);for(const t of titlesOfSeries(x
 async function delPub(p){await delOwnCover(p);for(const k in (p.mcovers||{})){const mc=p.mcovers[k];if(mc&&mc.own)await delAsset(mc.id)}for(const x of seriesOf(p.id))await delSeries(x);for(const t of titlesOf(p.id))await delTitle(t);await wr(ref('publishers',p.id).delete())}
 
 /* ---------- navigation ---------- */
-function setStack(s){S.stack=s;S.lb=null;render();window.scrollTo(0,0)}
+function setStack(s){S.stack=s;S.lb=null;S.reorder=null;render();window.scrollTo(0,0)}
 function go(v){setStack(S.stack.concat([v]))}
 function pathPub(id){return [{v:'home'},{v:'pub',id}]}
 function pathMedia(pid,m){return pathPub(pid).concat([{v:'media',id:pid,m}])}
@@ -554,7 +566,7 @@ function render(){
 }
 function renderFab(v){
   const f=$('#fab');let a=null;
-  if(S.ready&&S.canEdit){
+  if(S.ready&&S.canEdit&&!S.reorder){
     if(v.v==='home')a=['add-pub','','出版社を追加'];
     else if(v.v==='media')a=['add-series',v.id,'シリーズを追加'];
     else if(v.v==='series')a=v.tab==='chars'?['add-char',v.id,'キャラを追加']:['add-title',v.id,'作品を追加'];
@@ -573,6 +585,24 @@ const ph=(t,c)=>`<div class="ph" style="--c:${c||'#e0312f'}"><span>${esc(t)}</sp
 const addTile=(act,label,id)=>S.canEdit?`<button class="add-tile" data-act="${act}"${id?` data-id="${esc(id)}"`:''}><span class="plus">+</span>${esc(label)}</button>`:'';
 const pickBtn=(kind,id,m)=>S.canEdit?`<button class="btn sm" data-act="pick-open" data-kind="${kind}" data-id="${esc(id)}"${m?` data-m="${m}"`:''}>表紙を選ぶ</button>`:'';
 const acts=(e,d,id,extra)=>S.canEdit?`<div class="head-acts"><button class="btn sm" data-act="${e}" data-id="${esc(id)}">編集</button>${extra||''}<button class="btn sm danger" data-act="${d}" data-id="${esc(id)}">削除</button></div>`:'';
+function listGrid(o){
+  const ro=S.canEdit&&S.reorder===o.key;
+  const bar=S.canEdit&&o.items.length>1?`<div class="ro-bar">${ro?'<span class="ro-hint">◀ ▶ で順番を入れ替えます</span>':''}<button class="btn sm${ro?' pri':''}" data-act="ro-toggle" data-key="${esc(o.key)}">${ro?'完了':'⇅ 並び替え'}</button></div>`:'';
+  const st=o.style?` style="${o.style}"`:'';
+  if(!ro)return bar+`<div class="grid ${o.cls}"${st}>${o.items.map(o.card).join('')}${o.add||''}${o.empty||''}</div>`;
+  S.roLists[o.key]={col:o.col,ids:o.items.map((x,i)=>x.id||i),cid:o.cid};
+  const n=o.items.length;
+  return bar+`<div class="grid ${o.cls} ro-on"${st}>${o.items.map((it,i)=>`<div class="ro-item">${o.card(it,i).replace(/ data-act="/g,' data-off="').replace('<button ','<button tabindex="-1" ')}
+    <div class="ro-ctl"><button data-act="ro-move" data-key="${esc(o.key)}" data-i="${i}" data-dir="-1" ${i===0?'disabled':''} aria-label="前へ移動">◀</button><b>${i+1}</b><button data-act="ro-move" data-key="${esc(o.key)}" data-i="${i}" data-dir="1" ${i===n-1?'disabled':''} aria-label="後ろへ移動">▶</button></div></div>`).join('')}</div>`;
+}
+async function roMove(key,i,dir){
+  const L=S.roLists[key];if(!L)return;const j=i+dir;if(j<0||j>=L.ids.length)return;
+  if(L.col==='vars'){const c=char(L.cid);if(!c)return;const arr=(c.variants||[]).slice();const t=arr[i];arr[i]=arr[j];arr[j]=t;
+    await wr(ref('characters',c.id).update({variants:arr}));return}
+  const arr=S[COLS[L.col]],a=arr.find(x=>x.id===L.ids[i]),b=arr.find(x=>x.id===L.ids[j]);if(!a||!b)return;
+  const oa=ordOf(a);let ob=ordOf(b);if(oa===ob)ob=oa+dir;
+  await wr(ref(L.col,a.id).update({order:ob}));await wr(ref(L.col,b.id).update({order:oa}));
+}
 function head(col,tag,name,sub,a,img){return `<section class="page-head panel${img?' has-img':''}" style="--c:${col}">${img?`<img class="head-img" src="${src(img)}" alt="">`:''}<span class="tag">${tag}</span><h1>${esc(name)}</h1>${sub?`<div class="sub">${sub}</div>`:''}${a||''}</section>`}
 
 function vHome(){
@@ -584,8 +614,7 @@ function vHome(){
   <div class="search"><input id="q" type="text" placeholder="シリーズ・作品・キャラを検索（例: Spider-Man）" aria-label="検索" autocomplete="off"></div>
   <div id="results"></div>
   <h2 class="sec">出版社<small>${pubs.length}</small></h2>
-  <div class="grid g-pub">${pubs.map(pubCard).join('')}${addTile('add-pub','出版社を追加')}
-  ${!pubs.length&&!S.canEdit?'<div class="empty">まだ出版社が登録されていません</div>':''}</div>`;
+  ${listGrid({key:'pubs',col:'publishers',items:pubs,card:pubCard,cls:'g-pub',add:addTile('add-pub','出版社を追加'),empty:!pubs.length&&!S.canEdit?'<div class="empty">まだ出版社が登録されていません</div>':''})}`;
 }
 function pubCard(p){
   const ts=titlesOf(p.id),ids=new Set(ts.map(t=>t.id));
@@ -648,7 +677,7 @@ function vPub(v){
    <div class="grid g-media">${MEDIA.map(m=>mediaTile(p,m)).join('')}</div>`+
   (loose.length?`<h2 class="sec">シリーズ未分類の作品<small>${loose.length}</small></h2>
    <p class="hint" style="margin:-6px 0 14px">作品の「編集」からシリーズを選ぶと移動できます</p>
-   <div class="grid g-img">${loose.map(titleCard).join('')}</div>`:'');
+   ${listGrid({key:'loose:'+p.id,col:'titles',items:loose,card:titleCard,cls:'g-img'})}`:'');
 }
 function vMedia(v){
   const p=pub(v.id);if(!p)return '';
@@ -659,8 +688,7 @@ function vMedia(v){
     ${S.canEdit?`<div class="head-acts">${pickBtn('media',p.id,m.k)}</div>`:''}</section>
    <h2 class="sec">シリーズ<small>${ss.length}</small></h2>
    <p class="hint" style="margin:-6px 0 14px">例：Spider-Man、X-Men、Avengers などの大きなくくり</p>
-   <div class="grid g-img">${ss.map(seriesCard).join('')}${addTile('add-series','シリーズを追加',p.id)}
-   ${!ss.length&&!S.canEdit?'<div class="empty">まだシリーズがありません</div>':''}</div>`;
+   ${listGrid({key:'series:'+p.id+':'+m.k,col:'series',items:ss,card:seriesCard,cls:'g-img',add:addTile('add-series','シリーズを追加',p.id),empty:!ss.length&&!S.canEdit?'<div class="empty">まだシリーズがありません</div>':''})}`;
 }
 function vSeries(v){
   const x=ser(v.id);if(!x)return '';
@@ -668,11 +696,9 @@ function vSeries(v){
   const m=MD(mediaOf(x));
   const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',p?`<button class="linkish" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">${m.n}</button>`:''].filter(Boolean).join('　／　');
   const body=tab==='chars'
-    ?`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',x.id)}
-      ${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`
+    ?listGrid({key:'schars:'+x.id,col:'characters',items:ch,card:charCard,cls:'g-img',add:addTile('add-char','キャラクターを追加',x.id),empty:!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''})
     :`<p class="hint" style="margin:-4px 0 14px">${esc(m.ex)} など</p>
-      <div class="grid g-img">${ts.map(titleCard).join('')}${addTile('add-title','作品を追加',x.id)}
-      ${!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''}</div>`;
+      ${listGrid({key:'works:'+x.id,col:'titles',items:ts,card:titleCard,cls:'g-img',add:addTile('add-title','作品を追加',x.id),empty:!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''})}`;
   return head(pcol(p),m.en+' ／ SERIES',x.name,sub,acts('edit-series','del-series',x.id,pickBtn('series',x.id)),seriesCover(x))+
    (x.note?`<p class="note panel">${esc(x.note)}</p>`:'')+
    `<div class="tabs" role="tablist">
@@ -687,12 +713,12 @@ function vTitle(v){
   const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',sx?`<button class="linkish" data-act="open-series" data-id="${esc(sx.id)}">${esc(sx.name)}</button>`:'',t.year?esc(t.year):''].filter(Boolean).join('　／　');
   let body='';
   if(tab==='covers'){
-    body=`<div class="grid g-img">${cs.map((c,i)=>`<button class="card panel" data-act="cover-lb" data-i="${i}">
+    body=listGrid({key:'covers:'+t.id,col:'covers',items:cs,cls:'g-img',card:(c,i)=>`<button class="card panel" data-act="cover-lb" data-i="${i}">
       <div class="thumb"><img src="${src(c.assetId)}" alt="${esc(c.label||'表紙')}" loading="lazy"></div>
       ${c.label||c.artist?`<div class="cap">${c.label?`<b>${esc(c.label)}</b>`:''}${c.artist?`<span>${esc(c.artist)}</span>`:''}</div>`:''}
-    </button>`).join('')}${addTile('add-cover',cvLabel(t)+'を追加',t.id)}${!cs.length&&!S.canEdit?`<div class="empty">まだ${cvLabel(t)}がありません</div>`:''}</div>`;
+    </button>`,add:addTile('add-cover',cvLabel(t)+'を追加',t.id),empty:!cs.length&&!S.canEdit?`<div class="empty">まだ${cvLabel(t)}がありません</div>`:''});
   }else{
-    body=`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',t.id)}${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`;
+    body=listGrid({key:'tchars:'+t.id,col:'characters',items:ch,card:charCard,cls:'g-img',add:addTile('add-char','キャラクターを追加',t.id),empty:!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''});
   }
   const top=head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id,pickBtn('title',t.id)),titleCover(t))+
    (t.note?`<p class="note panel">${esc(t.note)}</p>`:'');
@@ -740,11 +766,9 @@ function vVar(v){
   const col=colOfChar(c),vars=c.variants||[],others=sameName(c);
   return head(col,'VARIANTS',heroOf(c),`${vars.length} 枚の画像${others.length?`　／　同じ名前のキャラ ${others.length}`:''}`,S.canEdit?`<div class="head-acts"><button class="btn sm pri" data-act="add-variant">＋ 画像を追加</button></div>`:'')+
    `<p class="hint">画像をタップで拡大。${S.canEdit?'拡大画面で「メイン画像にする」「削除」ができます。':''}</p>
-   <div class="grid g-img" style="margin-top:16px">${vars.map((x,i)=>`<button class="card panel" data-act="var-lb" data-i="${i}">
+   <div style="margin-top:16px"></div>${listGrid({key:'vars:'+c.id,col:'vars',cid:c.id,items:vars,cls:'g-img',card:(x,i)=>`<button class="card panel" data-act="var-lb" data-i="${i}">
      <div class="thumb t34"><img src="${src(x.assetId)}" alt="${esc(x.label||'ヴァリアント')}" loading="lazy"></div>
-     ${x.label?`<div class="cap"><b>${esc(x.label)}</b></div>`:''}</button>`).join('')}
-   ${addTile('add-variant','ヴァリアント画像を追加')}
-   ${!vars.length&&!S.canEdit?'<div class="empty">まだヴァリアント画像がありません</div>':''}</div>`+
+     ${x.label?`<div class="cap"><b>${esc(x.label)}</b></div>`:''}</button>`,add:addTile('add-variant','ヴァリアント画像を追加'),empty:!vars.length&&!S.canEdit?'<div class="empty">まだヴァリアント画像がありません</div>':''})}`+
    (others.length?`<h2 class="sec">ほかの作品の ${esc(heroOf(c))}<small>${others.length}</small></h2>
    <p class="hint" style="margin:-6px 0 14px">コミック・アニメ・映画・ゲームを問わず、同じ名前で登録したキャラクターです</p>
    <div class="same-list">${others.map(sameBlock).join('')}</div>`:'');
@@ -949,7 +973,7 @@ document.addEventListener('click',e=>{
     case 'open-title':setStack(pathTitle(id));break;
     case 'open-char':setStack(pathChar(id));break;
     case 'open-variants':go({v:'var',id:v.id});break;
-    case 'tab':v.tab=b.dataset.k;render();break;
+    case 'tab':v.tab=b.dataset.k;S.reorder=null;render();break;
     case 'add-pub':pubForm();break;
     case 'edit-pub':pubForm(pub(id));break;
     case 'del-pub':{const p=pub(id);const n=titlesOf(id).length,m=seriesOf(id).length;
@@ -991,6 +1015,8 @@ document.addEventListener('click',e=>{
       b.disabled=true;
       ref('characters',c.id).update({imageId:x.assetId,variants:nv}).then(()=>toast('メイン画像を変更しました'),err=>{b.disabled=false;toast(msg(err))});break}
     case 'modal-close':closeModal();break;
+    case 'ro-toggle':S.reorder=S.reorder===b.dataset.key?null:b.dataset.key;render();break;
+    case 'ro-move':if(S.roBusy)break;S.roBusy=true;roMove(b.dataset.key,+b.dataset.i,+b.dataset.dir).catch(e=>toast(e.message||msg(e))).finally(()=>{S.roBusy=false});break;
     case 'pick-open':openPicker({kind:b.dataset.kind,id,m:b.dataset.m});break;
     case 'pick':if(S.busy)break;S.busy=true;setCover(S.picker,id,false).then(()=>{S.busy=false;closeModal();toast('表紙を変更しました')},e=>{S.busy=false;showErr(e.message||msg(e))});break;
     case 'pick-auto':if(S.busy)break;S.busy=true;setCover(S.picker,'',false).then(()=>{S.busy=false;closeModal();toast('自動に戻しました')},e=>{S.busy=false;showErr(e.message||msg(e))});break;
