@@ -296,7 +296,10 @@ const looseTitles=pid=>S.titles.filter(t=>t.publisherId===pid&&!(t.seriesId&&ser
 const char=id=>S.chars.find(x=>x.id===id);
 const titlesOf=pid=>S.titles.filter(t=>t.publisherId===pid);
 const coversOf=tid=>S.covers.filter(c=>c.titleId===tid);
-const charsOf=tid=>S.chars.filter(c=>c.titleId===tid);
+const charsOf=tid=>S.chars.filter(c=>!c.seriesId&&c.titleId===tid);
+const charsOfSeries=sid=>S.chars.filter(c=>c.seriesId===sid);
+const charPubId=c=>{const x=c&&c.seriesId&&ser(c.seriesId);if(x)return x.publisherId;const t=c&&title(c.titleId);return t&&t.publisherId};
+const colOfChar=c=>pcol(pub(charPubId(c)));
 const pcol=p=>(COLORS.find(x=>x.k===(p&&p.color))||COLORS[0]).c;
 const colOfTitle=t=>pcol(t&&pub(t.publisherId));
 const heroOf=c=>c.heroName||c.name||'名前未設定';
@@ -385,7 +388,15 @@ async function init(){
   if(S.mode==='idb'&&!seeded){try{await tx('docs','readwrite',st=>st.put({key:'meta/seeded',col:'meta',data:{id:'seeded'}}))}catch(e){}}
   S.persist=S.mode!=='mem';
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+  await migrateChars();
   S.ready=true;render();
+}
+async function migrateChars(){
+  for(const c of S.chars.slice()){
+    if(c.seriesId)continue;
+    const t=title(c.titleId);
+    if(t&&t.seriesId&&ser(t.seriesId)){try{await S.db.collection('characters').doc(c.id).update({seriesId:t.seriesId})}catch(e){}}
+  }
 }
 
 async function prep(file){
@@ -435,8 +446,8 @@ async function wr(p){try{return await p}catch(e){throw new Error(msg(e))}}
 async function delChar(c){await wr(ref('characters',c.id).delete());await delAsset(c.imageId);for(const v of (c.variants||[]))await delAsset(v.assetId)}
 async function delCover(c){await wr(ref('covers',c.id).delete());await delAsset(c.assetId)}
 async function delTitle(t){for(const c of coversOf(t.id))await delCover(c);for(const c of charsOf(t.id))await delChar(c);await wr(ref('titles',t.id).delete())}
-async function delSeries(x){for(const t of titlesOfSeries(x.id))await delTitle(t);await wr(ref('series',x.id).delete())}
-async function delPub(p){for(const t of titlesOf(p.id))await delTitle(t);for(const x of seriesOf(p.id))await wr(ref('series',x.id).delete());await wr(ref('publishers',p.id).delete())}
+async function delSeries(x){for(const t of titlesOfSeries(x.id))await delTitle(t);for(const c of charsOfSeries(x.id))await delChar(c);await wr(ref('series',x.id).delete())}
+async function delPub(p){for(const x of seriesOf(p.id))await delSeries(x);for(const t of titlesOf(p.id))await delTitle(t);await wr(ref('publishers',p.id).delete())}
 
 /* ---------- navigation ---------- */
 function setStack(s){S.stack=s;S.lb=null;render();window.scrollTo(0,0)}
@@ -445,7 +456,7 @@ function pathPub(id){return [{v:'home'},{v:'pub',id}]}
 function pathMedia(pid,m){return pathPub(pid).concat([{v:'media',id:pid,m}])}
 function pathSeries(id){const x=ser(id);return pathMedia(x&&x.publisherId,mediaOf(x)).concat([{v:'series',id}])}
 function pathTitle(id,tab){const t=title(id);const base=t&&t.seriesId&&ser(t.seriesId)?pathSeries(t.seriesId):pathPub(t&&t.publisherId);return base.concat([{v:'title',id,tab:tab||'covers'}])}
-function pathChar(id){const c=char(id);return pathTitle(c&&c.titleId,'chars').concat([{v:'char',id}])}
+function pathChar(id){const c=char(id);const base=c&&c.seriesId&&ser(c.seriesId)?pathSeries(c.seriesId).map(e=>e.v==='series'?Object.assign({},e,{tab:'chars'}):e):pathTitle(c&&c.titleId,'chars');return base.concat([{v:'char',id}])}
 function validateStack(){
   if(!allLoaded())return;
   for(let i=1;i<S.stack.length;i++){
@@ -495,8 +506,8 @@ function renderFab(v){
   if(S.ready&&S.canEdit){
     if(v.v==='home')a=['add-pub','','出版社を追加'];
     else if(v.v==='media')a=['add-series',v.id,'シリーズを追加'];
-    else if(v.v==='series')a=['add-title',v.id,'作品を追加'];
-    else if(v.v==='title')a=(v.tab||'covers')==='covers'?['add-cover',v.id,cvLabel(title(v.id))+'を追加']:['add-char',v.id,'キャラを追加'];
+    else if(v.v==='series')a=v.tab==='chars'?['add-char',v.id,'キャラを追加']:['add-title',v.id,'作品を追加'];
+    else if(v.v==='title'){const t=title(v.id);a=(v.tab||'covers')==='covers'||(t&&t.seriesId&&ser(t.seriesId))?['add-cover',v.id,cvLabel(t)+'を追加']:['add-char',v.id,'キャラを追加']}
     else if(v.v==='var')a=['add-variant','','画像を追加'];
   }
   if(!a){f.hidden=true;return}
@@ -526,7 +537,7 @@ function vHome(){
 }
 function pubCard(p){
   const ts=titlesOf(p.id),ids=new Set(ts.map(t=>t.id));
-  const nChars=S.chars.filter(c=>ids.has(c.titleId)).length;
+  const nChars=S.chars.filter(c=>charPubId(c)===p.id).length;
   const thumbs=[];for(const t of ts){const c=coversOf(t.id)[0];if(c)thumbs.push(c.assetId);if(thumbs.length>=4)break}
   return `<button class="card panel pcard" style="--c:${pcol(p)}" data-act="open-pub" data-id="${esc(p.id)}">
     <div class="pc-band"><div class="pc-name">${esc(p.name)}</div></div>
@@ -538,20 +549,20 @@ function titleCard(t){
   const c=coversOf(t.id)[0],col=colOfTitle(t);
   return `<button class="card panel" data-act="open-title" data-id="${esc(t.id)}">
     <div class="thumb">${c?`<img src="${src(c.assetId)}" alt="" loading="lazy">`:ph(t.name,col)}</div>
-    <div class="cap"><b>${esc(t.name)}</b><span>${[t.year,`表紙 ${coversOf(t.id).length} ・ キャラ ${charsOf(t.id).length}`].filter(Boolean).map(esc).join(' ／ ')}</span></div>
+    <div class="cap"><b>${esc(t.name)}</b><span>${[t.year,(t.seriesId&&ser(t.seriesId)?`${cvLabel(t)} ${coversOf(t.id).length}`:`${cvLabel(t)} ${coversOf(t.id).length} ・ キャラ ${charsOf(t.id).length}`)].filter(Boolean).map(esc).join(' ／ ')}</span></div>
   </button>`;
 }
 function seriesCard(x){
   const ts=titlesOfSeries(x.id),p=pub(x.publisherId),col=pcol(p);
   let cv=null;for(const t of ts){cv=coversOf(t.id)[0];if(cv)break}
-  const nc=S.chars.filter(c=>ts.some(t=>t.id===c.titleId)).length;
+  const nc=charsOfSeries(x.id).length;
   return `<button class="card panel scard" style="--c:${col}" data-act="open-series" data-id="${esc(x.id)}">
     <div class="thumb">${cv?`<img src="${src(cv.assetId)}" alt="" loading="lazy">`:ph(x.name,col)}<span class="stag">${MD(mediaOf(x)).en}</span></div>
     <div class="cap"><b>${esc(x.name)}</b><span>作品 ${ts.length} ・ キャラ ${nc}</span></div>
   </button>`;
 }
 function charCard(c){
-  const t=title(c.titleId),col=colOfTitle(t),n=(c.variants||[]).length;
+  const col=colOfChar(c),n=(c.variants||[]).length;
   return `<button class="card panel ccard" style="--c:${col}" data-act="open-char" data-id="${esc(c.id)}">
     <div class="thumb t34">${c.imageId?`<img src="${src(c.imageId)}" alt="" loading="lazy">`:ph(heroOf(c),col)}</div>
     <div class="cap"><span class="hn display">${esc(heroOf(c))}</span>${c.heroName&&c.name?`<span>${esc(c.name)}</span>`:''}</div>
@@ -599,20 +610,26 @@ function vMedia(v){
 }
 function vSeries(v){
   const x=ser(v.id);if(!x)return '';
-  const p=pub(x.publisherId),ts=titlesOfSeries(x.id);
+  const p=pub(x.publisherId),ts=titlesOfSeries(x.id),ch=charsOfSeries(x.id),tab=v.tab||'works';
   const m=MD(mediaOf(x));
-  const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',p?`<button class="linkish" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">${m.n}</button>`:'',`作品 ${ts.length}`].filter(Boolean).join('　／　');
+  const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',p?`<button class="linkish" data-act="open-media" data-id="${esc(p.id)}" data-m="${m.k}">${m.n}</button>`:''].filter(Boolean).join('　／　');
+  const body=tab==='chars'
+    ?`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',x.id)}
+      ${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`
+    :`<p class="hint" style="margin:-4px 0 14px">${esc(m.ex)} など</p>
+      <div class="grid g-img">${ts.map(titleCard).join('')}${addTile('add-title','作品を追加',x.id)}
+      ${!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''}</div>`;
   return head(pcol(p),m.en+' ／ SERIES',x.name,sub,acts('edit-series','del-series',x.id))+
    (x.note?`<p class="note panel">${esc(x.note)}</p>`:'')+
-   `<h2 class="sec">作品一覧<small>${ts.length}</small></h2>
-   <p class="hint" style="margin:-6px 0 14px">${esc(m.ex)} など</p>
-   <div class="grid g-img">${ts.map(titleCard).join('')}${addTile('add-title','作品を追加',x.id)}
-   ${!ts.length&&!S.canEdit?'<div class="empty">まだ作品がありません</div>':''}</div>`;
+   `<div class="tabs" role="tablist">
+     <button class="tab ${tab==='works'?'on':''}" role="tab" aria-selected="${tab==='works'}" data-act="tab" data-k="works">作品一覧<b>${ts.length}</b></button>
+     <button class="tab ${tab==='chars'?'on':''}" role="tab" aria-selected="${tab==='chars'}" data-act="tab" data-k="chars">キャラクター一覧<b>${ch.length}</b></button>
+   </div>`+body;
 }
 function vTitle(v){
   const t=title(v.id);if(!t)return '';
-  const p=pub(t.publisherId),cs=coversOf(t.id),ch=charsOf(t.id),tab=v.tab||'covers';
   const sx=t.seriesId&&ser(t.seriesId);
+  const p=pub(t.publisherId),cs=coversOf(t.id),ch=charsOf(t.id),tab=sx?'covers':(v.tab||'covers');
   const sub=[p?`<button class="linkish" data-act="open-pub" data-id="${esc(p.id)}">${esc(p.name)}</button>`:'',sx?`<button class="linkish" data-act="open-series" data-id="${esc(sx.id)}">${esc(sx.name)}</button>`:'',t.year?esc(t.year):''].filter(Boolean).join('　／　');
   let body='';
   if(tab==='covers'){
@@ -623,21 +640,28 @@ function vTitle(v){
   }else{
     body=`<div class="grid g-img">${ch.map(charCard).join('')}${addTile('add-char','キャラクターを追加',t.id)}${!ch.length&&!S.canEdit?'<div class="empty">まだキャラクターがいません</div>':''}</div>`;
   }
-  return head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id))+
-   (t.note?`<p class="note panel">${esc(t.note)}</p>`:'')+
-   `<div class="tabs" role="tablist">
+  const top=head(colOfTitle(t),MD(mediaOfTitle(t)).en+' ／ TITLE',t.name,sub,acts('edit-title','del-title',t.id))+
+   (t.note?`<p class="note panel">${esc(t.note)}</p>`:'');
+  if(sx){
+    const n=charsOfSeries(sx.id).length;
+    return top+`<div class="tabs"><span class="tab on">${cvLabel(t)}一覧<b>${cs.length}</b></span>
+      <button class="tab" data-act="series-chars" data-id="${esc(sx.id)}">キャラクター一覧<b>${n}</b> →</button></div>
+      <p class="hint" style="margin:-8px 0 14px">キャラクターはシリーズ「${esc(sx.name)}」にまとめています</p>`+
+      body;
+  }
+  return top+`<div class="tabs" role="tablist">
      <button class="tab ${tab==='covers'?'on':''}" role="tab" aria-selected="${tab==='covers'}" data-act="tab" data-k="covers">${cvLabel(t)}一覧<b>${cs.length}</b></button>
      <button class="tab ${tab==='chars'?'on':''}" role="tab" aria-selected="${tab==='chars'}" data-act="tab" data-k="chars">キャラクター一覧<b>${ch.length}</b></button>
    </div>`+body;
 }
 function vChar(v){
   const c=char(v.id);if(!c)return '';
-  const t=title(c.titleId),p=t&&pub(t.publisherId),col=colOfTitle(t),vars=c.variants||[];
+  const x=c.seriesId&&ser(c.seriesId),t=!x&&title(c.titleId),p=pub(charPubId(c)),col=colOfChar(c),vars=c.variants||[];
   const facts=[['所属',c.team],['初登場',c.first],['能力',c.powers]].filter(f=>f[1]);
   return `<div class="char-wrap" style="--c:${col}">
     <button class="char-img panel" data-act="main-lb" aria-label="画像を拡大">${c.imageId?`<img src="${src(c.imageId)}" alt="${esc(heroOf(c))}">`:ph(heroOf(c),col)}</button>
     <div class="char-info">
-      <span><span class="tag">${esc([p&&p.name,t&&t.name].filter(Boolean).join(' ／ '))}</span></span>
+      <span><span class="tag">${esc([p&&p.name,x?x.name:(t&&t.name)].filter(Boolean).join(' ／ '))}</span></span>
       <h1 class="hero-name">${esc(heroOf(c))}</h1>
       ${c.heroName&&c.name?`<div class="real"><span>本名</span>${esc(c.name)}</div>`:''}
       <button class="variant-btn" data-act="open-variants">VARIANTS<b>${vars.length}</b><small>ほかの画像</small></button>
@@ -649,7 +673,7 @@ function vChar(v){
 }
 function vVar(v){
   const c=char(v.id);if(!c)return '';
-  const t=title(c.titleId),col=colOfTitle(t),vars=c.variants||[];
+  const col=colOfChar(c),vars=c.variants||[];
   return head(col,'VARIANTS',heroOf(c),`${vars.length} 枚の画像`,S.canEdit?`<div class="head-acts"><button class="btn sm pri" data-act="add-variant">＋ 画像を追加</button></div>`:'')+
    `<p class="hint">画像をタップで拡大。${S.canEdit?'拡大画面で「メイン画像にする」「削除」ができます。':''}</p>
    <div class="grid g-img" style="margin-top:16px">${vars.map((x,i)=>`<button class="card panel" data-act="var-lb" data-i="${i}">
@@ -767,7 +791,8 @@ function titleForm(pid,t,sid){
       {k:'year',label:'刊行年・期間',ph:'例: 1963–'},
       {k:'note',label:'メモ・あらすじ',type:'textarea',rows:4,ph:'シリーズの概要や好きなエピソードなど'}],
     onSubmit:async v=>{const d={name:v.name,year:v.year,note:v.note,seriesId:v.seriesId||''};
-      if(t)await wr(ref('titles',t.id).update(d));else await wr(S.db.collection('titles').add(Object.assign(d,{publisherId:pid,createdAt:Date.now()})))}});
+      if(t)await wr(ref('titles',t.id).update(d));else await wr(S.db.collection('titles').add(Object.assign(d,{publisherId:pid,createdAt:Date.now()})));
+      await migrateChars()}});
 }
 function coverForm(tid,c){
   const fields=c
@@ -785,7 +810,7 @@ function coverForm(tid,c){
         await wr(S.db.collection('covers').add({titleId:tid,assetId:id,label:v.label,artist:v.artist,createdAt:Date.now()}))}
     }});
 }
-function charForm(tid,c){
+function charForm(owner,c){
   openForm({title:c?'キャラクターを編集':'キャラクターを追加',values:c?Object.assign({},c,{image:c.imageId}):{},done:c?'更新しました':'キャラクターを追加しました',
     fields:[{k:'heroName',label:'ヒーロー名',ph:'例: Spider-Man'},{k:'name',label:'本名',ph:'例: Peter Parker'},
       {k:'image',label:'メイン画像',type:'file'},{k:'team',label:'所属・チーム',ph:'例: Avengers'},
@@ -796,7 +821,7 @@ function charForm(tid,c){
       const d={heroName:v.heroName,name:v.name,team:v.team,first:v.first,powers:v.powers,intro:v.intro};let old=null;
       if(v.image){prog('アップロード中…');d.imageId=await up(v.image);if(c)old=c.imageId}
       if(c){await wr(ref('characters',c.id).update(d));if(old)await delAsset(old)}
-      else await wr(S.db.collection('characters').add(Object.assign({imageId:'',variants:[]},d,{titleId:tid,createdAt:Date.now()})));
+      else await wr(S.db.collection('characters').add(Object.assign({imageId:'',variants:[]},d,owner,{createdAt:Date.now()})));
     }});
 }
 function variantForm(cid){
@@ -833,14 +858,16 @@ document.addEventListener('click',e=>{
     case 'add-series':seriesForm(id,null,v.v==='media'?v.m:'comic');break;
     case 'edit-series':seriesForm(null,ser(id));break;
     case 'del-series':{const x=ser(id);const n=titlesOfSeries(id).length;
-      openConfirm(`「${esc(x.name)}」を削除しますか？${n?`<br>中の作品 ${n} 件と、その表紙・キャラクターもすべて削除されます。`:''}`,'削除する',async()=>{await delSeries(x);toast('削除しました')});break}
+      const k=charsOfSeries(id).length;
+      openConfirm(`「${esc(x.name)}」を削除しますか？${n||k?`<br>中の作品 ${n} 件・キャラクター ${k} 人と、その画像もすべて削除されます。`:''}`,'削除する',async()=>{await delSeries(x);toast('削除しました')});break}
     case 'add-title':{if(v.v==='series'){const x=ser(id);if(x)titleForm(x.publisherId,null,x.id)}else titleForm(id);break}
     case 'edit-title':titleForm(null,title(id));break;
     case 'del-title':{const t=title(id);
-      openConfirm(`「${esc(t.name)}」を削除しますか？<br>表紙 ${coversOf(id).length} 枚とキャラクター ${charsOf(id).length} 人も削除されます。`,'削除する',async()=>{await delTitle(t);toast('削除しました')});break}
+      openConfirm(`「${esc(t.name)}」を削除しますか？<br>${cvLabel(t)} ${coversOf(id).length} 枚${charsOf(id).length?`とキャラクター ${charsOf(id).length} 人`:''}も削除されます。`,'削除する',async()=>{await delTitle(t);toast('削除しました')});break}
     case 'add-cover':coverForm(id);break;
     case 'cover-lb':openLB('cover',v.id,i);break;
-    case 'add-char':charForm(id);break;
+    case 'add-char':charForm(v.v==='series'?{seriesId:id,titleId:''}:{titleId:id});break;
+    case 'series-chars':setStack(pathSeries(id).map(e=>e.v==='series'?Object.assign({},e,{tab:'chars'}):e));break;
     case 'edit-char':charForm(null,char(id));break;
     case 'del-char':{const c=char(id);
       openConfirm(`「${esc(heroOf(c))}」を削除しますか？<br>ヴァリアント画像 ${(c.variants||[]).length} 枚も削除されます。`,'削除する',async()=>{await delChar(c);toast('削除しました')});break}
