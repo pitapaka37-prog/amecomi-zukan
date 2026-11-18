@@ -147,6 +147,16 @@ button,input,label,a{touch-action:manipulation;-webkit-tap-highlight-color:trans
 .mt-cap b{font-family:var(--jp-display);font-weight:400;font-size:18px}
 .mt-cap span{font-size:12px;color:var(--muted)}
 .mhead{background:linear-gradient(100deg,var(--c) 0 58%,var(--mc) 58%)}
+.same-list{display:flex;flex-direction:column;gap:16px}
+.same{padding:12px 12px 8px;border-left:10px solid var(--mc)}
+.same-head{display:flex;align-items:center;gap:10px}
+.mtag{background:var(--mc);border:2px solid var(--ink);font-weight:900;font-size:12px;padding:2px 8px;white-space:nowrap}
+.same-t{flex:1;min-width:0;display:flex;flex-direction:column}
+.same-t b{font-weight:900;word-break:break-word}
+.same-t span{font-size:12px;color:var(--muted);word-break:break-word}
+.same-strip{display:flex;gap:10px;overflow-x:auto;padding:12px 2px 8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.same-strip button{flex:none;width:100px;aspect-ratio:3/4;border:2px solid var(--ink);padding:0;background:#ddd;cursor:zoom-in;scroll-snap-align:start;overflow:hidden}
+.same-strip img{width:100%;height:100%;object-fit:cover}
 .stag{position:absolute;left:8px;top:8px;background:var(--ink);color:var(--yellow);font-family:var(--display);font-size:13px;letter-spacing:1px;padding:1px 7px;border:2px solid #fff}
 .scard{border-top:7px solid var(--c)}
 .badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border:2px solid var(--ink);font-family:var(--display);font-size:15px;padding:1px 7px;border-radius:999px;box-shadow:2px 2px 0 var(--ink)}
@@ -300,6 +310,15 @@ const charsOf=tid=>S.chars.filter(c=>!c.seriesId&&c.titleId===tid);
 const charsOfSeries=sid=>S.chars.filter(c=>c.seriesId===sid);
 const charPubId=c=>{const x=c&&c.seriesId&&ser(c.seriesId);if(x)return x.publisherId;const t=c&&title(c.titleId);return t&&t.publisherId};
 const colOfChar=c=>pcol(pub(charPubId(c)));
+const norm=t=>(t||'').normalize('NFKC').toLowerCase().replace(/[\s\-‐‑‒–—―_・.·'’"]/g,'');
+const charKey=c=>norm(c.heroName||c.name);
+const mediaOfChar=c=>{const x=c&&c.seriesId&&ser(c.seriesId);return x?mediaOf(x):mediaOfTitle(title(c&&c.titleId))};
+function sameName(c){
+  const k=charKey(c);if(!k)return [];
+  const order=m=>MEDIA.findIndex(x=>x.k===m);
+  return S.chars.filter(o=>o.id!==c.id&&charKey(o)===k)
+    .sort((a,b)=>order(mediaOfChar(a))-order(mediaOfChar(b))||(a.createdAt||0)-(b.createdAt||0));
+}
 const pcol=p=>(COLORS.find(x=>x.k===(p&&p.color))||COLORS[0]).c;
 const colOfTitle=t=>pcol(t&&pub(t.publisherId));
 const heroOf=c=>c.heroName||c.name||'名前未設定';
@@ -664,23 +683,36 @@ function vChar(v){
       <span><span class="tag">${esc([p&&p.name,x?x.name:(t&&t.name)].filter(Boolean).join(' ／ '))}</span></span>
       <h1 class="hero-name">${esc(heroOf(c))}</h1>
       ${c.heroName&&c.name?`<div class="real"><span>本名</span>${esc(c.name)}</div>`:''}
-      <button class="variant-btn" data-act="open-variants">VARIANTS<b>${vars.length}</b><small>ほかの画像</small></button>
+      <button class="variant-btn" data-act="open-variants">VARIANTS<b>${vars.length+sameName(c).length}</b><small>${sameName(c).length?`ほかの画像・ほかの作品 ${sameName(c).length}`:'ほかの画像'}</small></button>
       ${facts.length?`<dl class="facts">${facts.map(f=>`<dt>${f[0]}</dt><dd>${esc(f[1])}</dd>`).join('')}</dl>`:''}
       ${c.intro?`<div class="intro panel">${esc(c.intro)}</div>`:(S.canEdit?'<p class="muted">「編集」からキャラ紹介を書けます。</p>':'')}
       ${acts('edit-char','del-char',c.id)}
     </div>
   </div>`;
 }
+function sameBlock(o){
+  const md=MD(mediaOfChar(o)),x=o.seriesId&&ser(o.seriesId),t=!x&&title(o.titleId),p=pub(charPubId(o));
+  const imgs=[o.imageId].concat((o.variants||[]).map(v=>v.assetId)).filter(Boolean);
+  return `<section class="same panel" style="--mc:${md.c}">
+    <div class="same-head"><span class="mtag">${md.n}</span>
+      <div class="same-t"><b>${esc(x?x.name:(t?t.name:''))}</b><span>${esc([p&&p.name,o.heroName&&o.name?o.name:''].filter(Boolean).join(' ／ '))}</span></div>
+      <button class="btn sm" data-act="open-char" data-id="${esc(o.id)}">開く</button></div>
+    <div class="same-strip">${imgs.length?imgs.map((a,i)=>`<button data-act="same-lb" data-id="${esc(o.id)}" data-i="${i}" aria-label="画像を拡大"><img src="${src(a)}" alt="" loading="lazy"></button>`).join(''):'<span class="muted" style="padding:8px 0">画像はまだありません</span>'}</div>
+  </section>`;
+}
 function vVar(v){
   const c=char(v.id);if(!c)return '';
-  const col=colOfChar(c),vars=c.variants||[];
-  return head(col,'VARIANTS',heroOf(c),`${vars.length} 枚の画像`,S.canEdit?`<div class="head-acts"><button class="btn sm pri" data-act="add-variant">＋ 画像を追加</button></div>`:'')+
+  const col=colOfChar(c),vars=c.variants||[],others=sameName(c);
+  return head(col,'VARIANTS',heroOf(c),`${vars.length} 枚の画像${others.length?`　／　同じ名前のキャラ ${others.length}`:''}`,S.canEdit?`<div class="head-acts"><button class="btn sm pri" data-act="add-variant">＋ 画像を追加</button></div>`:'')+
    `<p class="hint">画像をタップで拡大。${S.canEdit?'拡大画面で「メイン画像にする」「削除」ができます。':''}</p>
    <div class="grid g-img" style="margin-top:16px">${vars.map((x,i)=>`<button class="card panel" data-act="var-lb" data-i="${i}">
      <div class="thumb t34"><img src="${src(x.assetId)}" alt="${esc(x.label||'ヴァリアント')}" loading="lazy"></div>
      ${x.label?`<div class="cap"><b>${esc(x.label)}</b></div>`:''}</button>`).join('')}
    ${addTile('add-variant','ヴァリアント画像を追加')}
-   ${!vars.length&&!S.canEdit?'<div class="empty">まだヴァリアント画像がありません</div>':''}</div>`;
+   ${!vars.length&&!S.canEdit?'<div class="empty">まだヴァリアント画像がありません</div>':''}</div>`+
+   (others.length?`<h2 class="sec">ほかの作品の ${esc(heroOf(c))}<small>${others.length}</small></h2>
+   <p class="hint" style="margin:-6px 0 14px">コミック・アニメ・映画・ゲームを問わず、同じ名前で登録したキャラクターです</p>
+   <div class="same-list">${others.map(sameBlock).join('')}</div>`:'');
 }
 
 /* ---------- lightbox ---------- */
@@ -874,6 +906,7 @@ document.addEventListener('click',e=>{
     case 'main-lb':openLB('main',v.id,0);break;
     case 'add-variant':variantForm(v.id);break;
     case 'var-lb':openLB('var',v.id,i);break;
+    case 'same-lb':openLB('main',id,i);break;
     case 'lb-close':S.lb=null;renderLB();break;
     case 'lb-prev':lbStep(-1);break;
     case 'lb-next':lbStep(1);break;
